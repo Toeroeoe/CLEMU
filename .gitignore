@@ -1,0 +1,14 @@
+emulators/BGC_spinup/Hao_Chen
+*.pyc
+*.err
+*.out
+.vscode/*
+*.pt
+*.allx
+*.ally
+*.graph
+*.index
+*.tx
+*.ty
+*.x
+*.y
