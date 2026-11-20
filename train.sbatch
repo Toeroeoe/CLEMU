@@ -68,10 +68,25 @@ srun --cpus-per-task="$SRUN_CPUS_PER_TASK" --cpu-bind=cores --kill-on-bad-exit=1
 if (( gpus > 1 )); then
     export OMP_NUM_THREADS=$(( SRUN_CPUS_PER_TASK / gpus ))
 
-    master_addr="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)"
+    master_addr="$(scontrol show hostnames "$SLURM_JOB_NODELIST" || true)"
+    # No `| head -n 1`: under `set -o pipefail` an scontrol that fails (or takes
+    # EPIPE when head exits early) fails the whole pipeline and aborts the job
+    # with no explanation, so `|| true` + an explicit check below is used instead.
+    master_addr="${master_addr%%$'\n'*}"
+    if [ -z "$master_addr" ]; then
+        echo "could not resolve the master node from SLURM_JOB_NODELIST='${SLURM_JOB_NODELIST:-}'" >&2
+        exit 1
+    fi
     case "${SYSTEMNAME:-}" in
-        # Address the InfiniBand interface on the JSC machines that have one.
-        juwels|juwelsbooster|jurecadc|jusuf) master_addr="${master_addr}i" ;;
+        # Address the InfiniBand interface on the JSC machines that have one;
+        # don't append twice if Slurm already reports the i-name
+        # (cf. pytorch/pytorch#73656).
+        juwels|juwelsbooster|jurecadc|jusuf)
+            case "${master_addr}" in
+                *i) : ;;
+                *) master_addr="${master_addr}i" ;;
+            esac
+            ;;
     esac
     export MASTER_ADDR="$master_addr"
     export MASTER_PORT="${MASTER_PORT:-54123}"
@@ -109,5 +124,7 @@ fi
 srun --cpus-per-task="$SRUN_CPUS_PER_TASK" --cpu-bind=cores --kill-on-bad-exit=1 \
      "${cmd[@]}" "${extra_args[@]}"
 
-# Optional: evaluate the best checkpoint. Skipped if the preflight failed.
+# Evaluate the best checkpoint. Not "optional" in the shell sense: with `set -e`
+# a failing evaluate marks the job FAILED, which is what you want -- a job whose
+# deliverable is missing should not look successful.
 python -u "$curr_dir/src/evaluate.py" --config "$curr_dir/config.yaml" --split all
