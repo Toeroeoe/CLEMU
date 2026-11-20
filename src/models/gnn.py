@@ -9,8 +9,13 @@ class GNN(nn.Module):
     """
     Graph Neural Network model with configurable layers and activation functions.
     Supports GCN, SAGE, and GAT layers.
-    For now, designed for node-level regression tasks.
+    For now, designed for node-level regression and classification tasks.
     """
+
+    # Layer classes that take an explicit `aggr`: GATConv aggregates through its
+    # attention mechanism and ignores `aggr`, but would accept it via **kwargs
+    # and silently do nothing.
+    AGGREGATING_LAYERS = ('GCNConv', 'SAGEConv')
 
     def __init__(
         self,
@@ -34,12 +39,13 @@ class GNN(nn.Module):
         # Select layer class
         layer_cls = self._get_layer_class(self.layer_type)
         # Input layer
-        self.convs.append(layer_cls(input_dim, hidden_dim, aggr=aggregation))
+        conv_kwargs = {"aggr": aggregation} if self.layer_type in self.AGGREGATING_LAYERS else {}
+        self.convs.append(layer_cls(input_dim, hidden_dim, **conv_kwargs))
         # Hidden layers
         for _ in range(num_layers - 2):
-            self.convs.append(layer_cls(hidden_dim, hidden_dim, aggr=aggregation))
+            self.convs.append(layer_cls(hidden_dim, hidden_dim, **conv_kwargs))
         # Output layer
-        self.convs.append(layer_cls(hidden_dim, output_dim, aggr=aggregation))
+        self.convs.append(layer_cls(hidden_dim, output_dim, **conv_kwargs))
 
     def _get_layer_class(self, layer_type: str):
         if layer_type == 'GCNConv':

@@ -1,80 +1,134 @@
+"""Evaluate a saved CLEMU checkpoint on a split of the prepared graph.
+
+The checkpoint written by ``src/train.py`` carries its own model config, so the
+model is rebuilt from the file rather than from whatever ``config.yaml`` happens
+to say now -- that mismatch is exactly how a checkpoint ends up "not loading"
+after an innocent-looking config edit.
+
+    python src/evaluate.py                       # test split, default checkpoint
+    python src/evaluate.py --split all           # train/val/test in one go
+    python src/evaluate.py --checkpoint out/GNN_Cora.pt --plot out/history.json
+"""
+
+import argparse
+import json
+import os
+
 import torch
-import torch.nn as nn
-import matplotlib.pyplot as plt
-from torch.utils.data import DataLoader
 import yaml
-from typing import Callable, Tuple, Any, Dict
+
+from data.preprocess import load_pyg_data
 from models.gnn import GNN
-from data.preprocess import load_data, preprocess_data
-from utils.helpers import get_loss_function, prepare_dataset
+from utils.engine import run_epoch
+from utils.helpers import describe_device, get_device, get_loss_function
 
-def evaluate_model(
-    model: nn.Module,
-    data_loader: DataLoader,
-    device: torch.device,
-    loss_function: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-) -> Tuple[float, float]:
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Evaluate a CLEMU GNN checkpoint.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--config", default="config.yaml", help="path to the YAML config")
+    parser.add_argument("--checkpoint", default=None, help="override evaluate.model_load_path")
+    parser.add_argument("--split", default="test", choices=["train", "val", "test", "all"])
+    parser.add_argument("--plot", default=None, help="path to a history.json to plot")
+    return parser.parse_args()
+
+
+def load_config(path: str) -> dict:
+    with open(path, "r") as handle:
+        config = yaml.safe_load(handle)
+    if not isinstance(config, dict) or not config:
+        raise RuntimeError(f"Config file {path!r} is empty or invalid.")
+    return config
+
+
+def build_model(checkpoint: dict, device: torch.device) -> GNN:
+    cfg = checkpoint["model_cfg"]
+    model = GNN(
+        cfg["input_dim"],
+        cfg["output_dim"],
+        cfg["hidden_dim"],
+        cfg["num_layers"],
+        aggregation=cfg.get("aggregation", "mean"),
+        dropout=cfg.get("dropout", 0.0),
+        layer_type=cfg.get("layer_type", "GCNConv"),
+        activation=cfg.get("activation", "relu"),
+    ).to(device)
+    model.load_state_dict(checkpoint["state_dict"])
     model.eval()
-    total_loss = 0
-    total_correct = 0
-    total_samples = 0
+    return model
 
-    with torch.no_grad():
-        for inputs, targets in data_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
-            outputs = model(inputs)
-            loss = loss_function(outputs, targets)
-            total_loss += loss.item()
 
-            _, predicted = torch.max(outputs.data, 1)
-            total_correct += (predicted == targets).sum().item()
-            total_samples += targets.size(0)
+def plot_history(path: str) -> None:
+    import matplotlib
 
-    average_loss = total_loss / len(data_loader)
-    accuracy = total_correct / total_samples
+    matplotlib.use("Agg")  # no display on compute nodes
+    import matplotlib.pyplot as plt
 
-    return average_loss, accuracy
+    with open(path, "r") as handle:
+        history = json.load(handle)["history"]
+    figure, axis = plt.subplots(figsize=(8, 4))
+    axis.plot(history["epoch"], history["train_loss"], label="train loss")
+    axis.plot(history["epoch"], history["val_loss"], label="val loss")
+    axis.set_xlabel("epoch")
+    axis.set_ylabel("loss")
+    axis.legend()
+    out = os.path.splitext(path)[0] + ".png"
+    figure.tight_layout()
+    figure.savefig(out, dpi=150)
+    print(f"Wrote {out}")
 
-def visualize_results(results: Dict[str, Any]) -> None:
-    plt.figure(figsize=(10, 5))
-    plt.plot(results['epochs'], results['loss'], label='Loss')
-    plt.plot(results['epochs'], results['accuracy'], label='Accuracy')
-    plt.title('Model Evaluation Results')
-    plt.xlabel('Epochs')
-    plt.ylabel('Metrics')
-    plt.legend()
-    plt.show()
 
 def main() -> None:
-    # Load config
-    with open("../config.yaml", "r") as f:
-        config = yaml.safe_load(f)
-    if not isinstance(config, dict) or not config:
-        raise RuntimeError("Config file '../config.yaml' is empty or invalid. Please provide a valid YAML config.")
-    
-    eval_cfg = config["evaluate"]
-    model_cfg = config["model"]
+    args = parse_args()
+    config = load_config(args.config)
+    eval_cfg = config.get("evaluate") or {}
+    train_cfg = config["train"]
+    data_cfg = config.get("data") or {}
 
-    # Load and preprocess eval data
-    eval_data = load_data(eval_cfg["eval_data_path"])
-    eval_data = preprocess_data(eval_data)
-    dataset = prepare_dataset(eval_data)
-    eval_loader = DataLoader(dataset, batch_size=eval_cfg["batch_size"], shuffle=False)
+    checkpoint_path = args.checkpoint or eval_cfg.get("model_load_path") or train_cfg["model_save_path"]
+    data_path = data_cfg.get("path") or train_cfg.get("train_data_path")
 
-    # Model parameters
-    input_dim = model_cfg["input_dim"]
-    output_dim = model_cfg["output_dim"]
-    hidden_dim = model_cfg["hidden_dim"]
-    num_layers = model_cfg["num_layers"]
+    if not os.path.exists(checkpoint_path):
+        raise SystemExit(
+            f"checkpoint not found: {checkpoint_path!r}\n"
+            f"  looked at: --checkpoint, evaluate.model_load_path, train.model_save_path\n"
+            f"  train first:  python src/train.py"
+        )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = GNN(input_dim, output_dim, hidden_dim, num_layers).to(device)
-    model.load_state_dict(torch.load(eval_cfg["model_load_path"], map_location=device))
+    device = get_device()
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    if not isinstance(checkpoint, dict) or "state_dict" not in checkpoint:
+        raise RuntimeError(
+            f"{checkpoint_path} is not a CLEMU checkpoint (expected a dict with 'state_dict')."
+        )
 
-    loss_function = get_loss_function(eval_cfg["loss_function"])
+    task = checkpoint["task"]
+    model = build_model(checkpoint, device)
+    loss_function = get_loss_function(eval_cfg.get("loss_function") or train_cfg["loss_function"])
 
-    avg_loss, accuracy = evaluate_model(model, eval_loader, device, loss_function)
-    print(f"Evaluation Loss: {avg_loss:.4f}, Evaluation Accuracy: {accuracy:.4f}")
+    data = load_pyg_data(data_path, weights_only=False, require_masks=False)
+    loader = type("Loader", (), {"__iter__": lambda self: iter([data]), "__len__": lambda self: 1})()
+
+    print(f"checkpoint : {checkpoint_path} (epoch {checkpoint.get('epoch')}, device {describe_device(device)})")
+    print(f"graph      : {data_path}")
+
+    splits = ["train", "val", "test"] if args.split == "all" else [args.split]
+    for split in splits:
+        mask = getattr(data, f"{split}_mask", None)
+        if mask is None:
+            print(f"{split:>5}: no {split}_mask in the graph -- skipped")
+            continue
+        metrics = run_epoch(model, loader, loss_function, task, device, optimizer=None, split=split)
+        line = f"{split}: loss={metrics['loss']:.4f} nodes={metrics['nodes']}"
+        if "accuracy" in metrics:
+            line += f" acc={metrics['accuracy']:.4f}"
+        print(line)
+
+    if args.plot:
+        plot_history(args.plot)
+
 
 if __name__ == "__main__":
     main()

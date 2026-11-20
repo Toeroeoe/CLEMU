@@ -1,27 +1,44 @@
+# CLEMU example run: Cora (Planetoid), prepared by test/planetoid_split_save.py
+#   python test/planetoid_split_save.py            -> data/Cora.pt
+#   python src/train.py                            -> out/GNN_Cora.pt
+#   python src/evaluate.py --split all
+#
+# The graph is 2708 nodes / 10556 edges / 1433 node features / 7 classes, with
+# train/val/test node masks. This file is also the template for the CLM5
+# emulator run: swap `task: regression` and point `data.path` at the real graph.
+
+seed: 42
+
+data:
+  path: "data/Cora.pt"
+
 model:
-  input_dim: 10
-  output_dim: 1
+  # null = infer from the loaded graph (Cora: input 1433, output 7).
+  # Setting them by hand is allowed but they must match the graph -- leaving
+  # them null removes the most common "mat1 and mat2 shapes cannot be
+  # multiplied" failure.
+  input_dim: null
+  output_dim: null
   hidden_dim: 64
   num_layers: 3
   aggregation: "sum"
-  layer_type: "GCNConv"
+  layer_type: "GCNConv"       # GCNConv | SAGEConv | GATConv
   activation: "relu"
   dropout: 0.2
 
-
 train:
-  train_data_path: "test/Cora_train.pt"
+  task: "classification"      # classification | regression
   model_save_path: "out/GNN_Cora.pt"
-  batch_size: 32
-  num_epochs: 100
-  loss_function: "MSELoss"
+  batch_size: 1               # one graph == one batch (node-level task)
+  num_epochs: 200
+  eval_every: 10              # validate every N epochs; the best val loss is kept
+  num_workers: 0
+  loss_function: "CrossEntropyLoss"   # MSELoss / L1Loss for regression
   optimizer:
     type: "Adam"
-    learning_rate: 0.001
-
+    learning_rate: 0.01
+    weight_decay: 0.0005
 
 evaluate:
-  eval_data_path: "path/to/eval/data"
-  batch_size: 32
-  loss_function: "MSELoss"
-  model_load_path: "gnn_model.pth"
+  model_load_path: null       # null = reuse train.model_save_path
+  loss_function: null         # null = reuse train.loss_function
