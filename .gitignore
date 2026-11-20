@@ -12,3 +12,16 @@ emulators/BGC_spinup/Hao_Chen
 *.ty
 *.x
 *.y
+
+# generated at run time
+__pycache__/
+.ipynb_checkpoints/
+out/
+data/
+venv/
+.venv/
+
+# uv resolves a lock against PyPI, which pins a torch that must never be
+# installed here (the JSC module provides it) -- kept out of the repo on purpose.
+uv.lock
+

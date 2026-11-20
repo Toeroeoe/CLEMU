@@ -1,0 +1,44 @@
+[project]
+name = "clemu"
+version = "0.1.0"
+description = "Graph-neural-network emulator for CLM5 carbon/nitrogen pools and fluxes"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch_geometric>=2.6,<3",
+    "scikit-learn>=1.3",
+    "pandas>=2.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# Only needed for `python src/evaluate.py --plot` (headless, Agg backend).
+plot = ["matplotlib>=3.7"]
+
+[dependency-groups]
+# For machines WITHOUT the JSC module stack (laptop, plain login node).
+# On JSC this group is never synced: torch comes from the `PyTorch` module,
+# built against the stage's CUDA (CUDA/13 on JURECA-DC in Stages/2026).
+local = ["torch>=2.4"]
+
+[tool.uv]
+# This is a script collection, not an importable distribution: no build step,
+# `uv sync` only manages the environment.
+package = false
+
+# ---------------------------------------------------------------------------
+# Why torch is not a hard dependency
+# ---------------------------------------------------------------------------
+# torch_geometric declares torch, so uv resolves it either way -- but on JSC it
+# must NOT be installed from PyPI, or a second copy shadows the module build and
+# the job starts failing with CUDA errors that have nothing to do with the code.
+# modules.sh therefore always runs
+#
+#     uv venv --system-site-packages "$CLEMU_VENV"
+#     uv sync --no-install-package torch --extra plot
+#
+# locally:  uv sync --group local
+#
+# torch_geometric is pure Python from 2.5 on -- no torch-scatter / torch-sparse /
+# pyg-lib compilation, which is what used to make PyG painful on clusters.
