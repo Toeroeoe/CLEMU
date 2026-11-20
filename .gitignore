@@ -18,6 +18,8 @@ __pycache__/
 .ipynb_checkpoints/
 out/*
 !out/.gitkeep
+log/*
+!log/.gitkeep
 data/
 venv/
 .venv/

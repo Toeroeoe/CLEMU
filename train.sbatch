@@ -2,8 +2,8 @@
 #SBATCH --account=jicg41
 #SBATCH --partition=dc-gpu-devel
 #SBATCH --job-name=gnn_test
-#SBATCH --output=gnn_test_%j.out
-#SBATCH --error=gnn_test_%j.err
+#SBATCH --output=log/gnn_test_%j.out
+#SBATCH --error=log/gnn_test_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=64
@@ -26,17 +26,17 @@
 # production jobs are expected to use all of them; `--gres=gpu:1` on dc-gpu is
 # fine for a smoke test but wastes three A100s.
 #
-# Job log: kept next to the script because Slurm opens --output/--error *before*
-# the script runs, so a path under a directory that does not exist yet kills the
-# job instantly. The resolved config is snapshotted into out/log/ instead, which
-# this script can create itself.
+# Job log: kept in log/, which is tracked via log/.gitkeep -- Slurm opens
+# --output/--error *before* the script runs, so a directory that does not exist
+# yet kills the job instantly with no log at all. The resolved config is
+# snapshotted into out/log/ instead, which the script creates itself.
 
 set -euo pipefail
 
 curr_dir="${SLURM_SUBMIT_DIR:-$PWD}"
 cd "$curr_dir"
 
-mkdir -p out out/log
+mkdir -p out out/log log
 cp config.yaml "out/log/config_${SLURM_JOB_ID}.yaml"
 
 # Stage 2026 toolchain (GCC 14.3, OpenMPI 5.0, CUDA/13 on JURECA-DC) + venv.

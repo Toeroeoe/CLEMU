@@ -43,7 +43,7 @@ sbatch train.sbatch                                 # preflight -> train -> eval
 | `test/preflight.py` | environment + device + data check, first step of every job |
 | `test/synthetic_graph_data.py` | random graph for smoke tests without a download |
 | `modules.sh` | Stage 2026 module stack + uv environment, to be sourced |
-| `train.sbatch` | Slurm job: preflight, train, evaluate |
+| `train.sbatch` | Slurm job: preflight, train, evaluate; logs land in `log/` |
 | `pyproject.toml` | dependencies for uv; torch is left out on purpose (see below) |
 
 ## Configuration contract
