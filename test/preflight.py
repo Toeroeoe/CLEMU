@@ -24,6 +24,7 @@ makes it greppable from the job log.
 
 import argparse
 import os
+import subprocess
 import sys
 import traceback
 import warnings
@@ -136,19 +137,52 @@ def check_device_kernels(device: torch.device) -> None:
     except RuntimeError as error:
         record("autograd forward/backward", False, str(error).splitlines()[0])
 
-    # Out-of-range index: on CPU this must raise IndexError, on GPU a device-side
-    # assert. Both are caught here so the user sees the message, not a hang.
-    try:
-        bad = torch.zeros(16, 2, device=device)
-        bad.index_select(0, torch.tensor([99], device=device, dtype=torch.long))
-        torch.cuda.synchronize() if device.type == "cuda" else None
-        record("out-of-range index rejected", False, "no error raised -- check is ineffective")
-    except (RuntimeError, IndexError) as error:
+    # Out-of-range index. On CPU this raises IndexError in-process. On CUDA it is
+    # a device-side *assert*, which is sticky: it corrupts the context, so every
+    # later kernel in the same process fails too. Observed on JURECA-DC, torch
+    # 2.9.1: this probe printed `srcIndex < srcSelectDimSize` and the next
+    # `.to(device)` raised "CUDA error: device-side assert triggered", killing the
+    # rest of the preflight -- the probe was destroying its own environment.
+    # On CUDA it therefore runs in a child process, where the doomed context dies
+    # with the probe.
+    probe_source = (
+        "import torch\n"
+        "device = torch.device(%r)\n"
+        "x = torch.zeros(16, 2, device=device)\n"
+        "x.index_select(0, torch.tensor([99], device=device, dtype=torch.long))\n"
+        'if device.type == "cuda":\n'
+        "    torch.cuda.synchronize()\n"
+        "raise SystemExit(3)\n"
+    ) % str(device)
+
+    if device.type != "cuda":
+        try:
+            probe = torch.zeros(16, 2, device=device)
+            probe.index_select(0, torch.tensor([99], device=device, dtype=torch.long))
+            record("out-of-range index rejected", False, "no error raised -- check is ineffective")
+        except (RuntimeError, IndexError) as error:
+            record("out-of-range index rejected", True, str(error).splitlines()[0][:110])
+        return
+
+    result = subprocess.run([sys.executable, "-c", probe_source], capture_output=True, text=True)
+    if result.returncode == 3:
+        record("out-of-range index rejected", False, "no error raised on the device -- check is ineffective")
+    elif result.returncode != 0:
+        detail = next(
+            (
+                line.strip()
+                for line in (result.stderr or "").splitlines()
+                if "Assertion" in line or "out of bounds" in line or "device-side assert" in line
+            ),
+            "",
+        )
         record(
             "out-of-range index rejected",
             True,
-            str(error).splitlines()[0][:110],
+            f"rejected in a child process (exit {result.returncode}): {detail[:100]}",
         )
+    else:
+        record("out-of-range index rejected", False, "child process exited 0 without raising")
 
 
 def check_data(device: torch.device, config_path: str) -> None:
