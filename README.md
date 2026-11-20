@@ -77,3 +77,11 @@ sbatch train.sbatch                                 # preflight -> train -> eval
   `dc-gpu` with `--gres=gpu:4`: JURECA charges the whole node either way.
 - DDP is only initialised when more than one GPU is requested; a one-GPU run has
   no NCCL, no rendezvous and no `CUDA_VISIBLE_DEVICES` rewriting.
+- `train.sbatch` launches DDP with `torchrun` and *static* rendezvous
+  (`--master-addr/--master-port/--node-rank`). That deliberately bypasses the
+  elastic c10d path, where JSC hostnames break: c10d matches `MASTER_ADDR`
+  against `socket.gethostname()` and misses the InfiniBand `i` suffix, and
+  `--master_addr` is honoured only by the static backend
+  (pytorch/pytorch#73656). No `torchrun_jsc` wrapper is needed — it existed for
+  older PyTorch versions and upstream now says current `torchrun` handles JSC
+  launch configuration directly.

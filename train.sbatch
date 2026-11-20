@@ -83,6 +83,17 @@ if (( gpus > 1 )); then
     # local ranks onto them; --nproc-per-node="gpu" would instead spawn one
     # process per *visible* GPU, which is wrong when --gres and CUDA_VISIBLE_DEVICES
     # disagree. Hence the explicit count.
+    #
+    # Static rendezvous on purpose: --master-addr/--master-port/--node-rank skips
+    # torchrun's elastic c10d path, which is exactly where JSC hostnames break
+    # (pytorch/pytorch#73656: c10d matches MASTER_ADDR against socket.gethostname()
+    # and never finds the InfiniBand "i"-suffixed name, and --master_addr is
+    # ignored unless the rendezvous backend is static -> deadlock). If you switch
+    # to elastic c10d you must add upstream's workaround instead:
+    #   --rdzv_backend=c10d \
+    #   --rdzv_conf=is_host=$(( SLURM_NODEID == 0 ? 1 : 0 ))
+    # torchrun_jsc is not needed either way: it existed to work around this issue
+    # on older PyTorch versions and is a no-op with Stage 2026's PyTorch 2.9.
     cmd=(env -u CUDA_VISIBLE_DEVICES
          torchrun
          --nproc-per-node="$gpus"
