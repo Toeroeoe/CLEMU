@@ -16,6 +16,7 @@ resolved relative to the working directory.
 """
 
 import argparse
+import copy
 import json
 import os
 
@@ -168,6 +169,7 @@ def main() -> None:
     save_path = ensure_parent_dir(train_cfg["model_save_path"])
     best_val = float("inf")
     best_epoch = -1
+    best_state = None
 
     for epoch in range(1, num_epochs + 1):
         train_metrics = run_epoch(
@@ -192,10 +194,12 @@ def main() -> None:
             if val_metrics["loss"] < best_val:
                 best_val = val_metrics["loss"]
                 best_epoch = epoch
+                core = model.module if hasattr(model, "module") else model
+                best_state = copy.deepcopy(core.state_dict())
                 if is_main:
                     torch.save(
                         {
-                            "state_dict": (model.module if hasattr(model, "module") else model).state_dict(),
+                            "state_dict": best_state,
                             "model_cfg": {
                                 "input_dim": input_dim,
                                 "output_dim": output_dim,
@@ -215,6 +219,15 @@ def main() -> None:
                     )
                     message += "  <- best, saved"
         log(message)
+
+    # The selection criterion is val loss, so the checkpoint on disk holds the
+    # best-validation epoch, not the last one. Restore those weights before
+    # anything downstream uses the in-memory model: here it matters, the best
+    # epoch was 10 while epoch 200 had collapsed to train loss ~0 and val loss
+    # ~0.87 (heavily overfitted).
+    if best_state is not None:
+        core = model.module if hasattr(model, "module") else model
+        core.load_state_dict(best_state)
 
     if is_main:
         history_path = os.path.join(os.path.dirname(os.path.abspath(save_path)), "history.json")
