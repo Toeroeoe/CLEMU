@@ -12,9 +12,10 @@
 #SBATCH --time=00:15:00
 
 # Usage, from the repository root:
-#     mkdir -p out              # the checkpoint directory; Slurm does not create it
 #     sbatch train.sbatch                   # example run, config.yaml
 #     sbatch train.sbatch --epochs 5        # extra args go to src/train.py
+# out/ is tracked (via out/.gitkeep) so the checkpoint directory exists in a fresh
+# clone; out/log/ is created below.
 #
 # Partition: dc-gpu-devel has *internet access* (dc-gpu does not) and a 2 h cap,
 # which is what the example needs -- the Cora download and a first `pip install`

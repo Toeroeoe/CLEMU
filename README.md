@@ -9,7 +9,6 @@ pipeline end to end before the real CLM5 graph exists.
 
 ```bash
 uv sync --group local                               # local machine: torch from PyPI
-mkdir -p out                                        # checkpoint directory
 uv run python test/planetoid_split_save.py          # -> data/Cora.pt (needs internet)
 uv run python src/train.py                          # -> out/GNN_Cora.pt
 uv run python src/evaluate.py --split all
@@ -25,7 +24,7 @@ source modules.sh --check                           # module stack + uv environm
 and for a batch job:
 
 ```bash
-mkdir -p out && sbatch train.sbatch                 # preflight -> train -> evaluate
+sbatch train.sbatch                                 # preflight -> train -> evaluate
 ```
 
 

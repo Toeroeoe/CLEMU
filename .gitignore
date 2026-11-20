@@ -16,7 +16,8 @@ emulators/BGC_spinup/Hao_Chen
 # generated at run time
 __pycache__/
 .ipynb_checkpoints/
-out/
+out/*
+!out/.gitkeep
 data/
 venv/
 .venv/
