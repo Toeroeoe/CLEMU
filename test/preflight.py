@@ -80,7 +80,19 @@ def check_environment() -> None:
             f"sm_{capability[0]}{capability[1]}" in arch_list,
             f"build supports {arch_list}",
         )
-    record("nccl built", torch.distributed.is_nccl_available(), "")
+    # NCCL is only required for GPU collectives: a CPU-only torch build (e.g. the
+    # CPU wheel on a laptop) has no NCCL and is perfectly fine for a CPU run, but
+    # a GPU run or any multi-process launch (DDP) cannot work without it.
+    nccl = torch.distributed.is_nccl_available()
+    need_nccl = REQUIRE_CUDA or int(os.environ.get("WORLD_SIZE", 1)) > 1
+    record(
+        "nccl built",
+        nccl or not need_nccl,
+        "available" if nccl
+        else "absent -- expected on a CPU-only build, fatal for GPU DDP"
+        if not need_nccl
+        else "absent, but a GPU/DDP run was requested",
+    )
     record("gloo built", torch.distributed.is_gloo_available(), "")
     dist_env = {
         key: os.environ[key] for key in ("WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT") if key in os.environ
@@ -91,6 +103,14 @@ def check_environment() -> None:
 def check_device_kernels(device: torch.device) -> None:
     """Exercise index-select and scatter-add, the two kernels behind a device-side assert."""
     print(f"Device kernels on {device}")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        record(
+            "device usable",
+            False,
+            "cuda requested but torch.cuda.is_available() is False "
+            "(no driver, no device, or a CPU-only torch build)",
+        )
+        return
     torch.manual_seed(0)
     try:
         x = torch.randn(64, 8, device=device)
@@ -157,6 +177,14 @@ def check_data(device: torch.device, config_path: str) -> None:
         from models.gnn import GNN
         from utils.engine import run_epoch
         from utils.helpers import get_loss_function, prepare_targets, resolve_dimensions
+
+        if device.type == "cuda" and not torch.cuda.is_available():
+            record(
+                "model forward/backward",
+                False,
+                "skipped: no usable CUDA device -- the environment checks above explain why",
+            )
+            return
 
         task = config["train"].get("task", "classification")
         input_dim, output_dim = resolve_dimensions(data, config["model"], task)
